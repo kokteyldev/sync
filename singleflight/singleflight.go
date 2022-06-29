@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
+	"log"
 	"runtime"
 	"runtime/debug"
 	"sync"
@@ -202,7 +202,9 @@ func (g *Group) doCall(c *call, key string, fn func() (interface{}, error)) {
 			// Already in the process of goexit, no need to call again
 		} else {
 			// Normal return
-			fmt.Printf("key %s returned for group size %d\n", key, c.dups)
+			if c.dups > 0 {
+				log.Printf("key %s returned for group size %d\n", key, c.dups)
+			}
 			for _, ch := range c.chans {
 				ch <- Result{c.val, c.err, c.dups > 0}
 			}
@@ -251,7 +253,7 @@ func (g *Group) Cancel(key string) {
 	if c, ok := g.m[key]; ok {
 		c.dups--
 		if c.dups < 0 {
-			fmt.Printf("db req cancelled for key %s\n", key)
+			log.Printf("db req cancelled for key %s\n", key)
 			c.cancel()
 		}
 		g.mu.Unlock()
