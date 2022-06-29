@@ -8,6 +8,7 @@ package singleflight // import "golang.org/x/sync/singleflight"
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -61,6 +62,9 @@ type call struct {
 	// not written after the WaitGroup is done.
 	dups  int
 	chans []chan<- Result
+
+	ctx    context.Context
+	cancel func()
 }
 
 // Group represents a class of work and forms a namespace in
@@ -135,11 +139,41 @@ func (g *Group) DoChan(key string, fn func() (interface{}, error)) <-chan Result
 	return ch
 }
 
+// DoChan is like Do but returns a channel that will receive the
+// results when they are ready.
+//
+// The returned channel will not be closed.
+func (g *Group) DoChanContext(key string, fn func(context.Context) func() (interface{}, error)) <-chan Result {
+	ch := make(chan Result, 1)
+	g.mu.Lock()
+	if g.m == nil {
+		g.m = make(map[string]*call)
+	}
+	if c, ok := g.m[key]; ok {
+		c.dups++
+		c.chans = append(c.chans, ch)
+		g.mu.Unlock()
+		return ch
+	}
+	c := &call{chans: []chan<- Result{ch}}
+	c.wg.Add(1)
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	g.m[key] = c
+	g.mu.Unlock()
+	go g.doCall(c, key, fn(c.ctx))
+
+	return ch
+}
+
 // doCall handles the single call for a key.
 func (g *Group) doCall(c *call, key string, fn func() (interface{}, error)) {
 	normalReturn := false
 	recovered := false
-
+	defer func() {
+		if c.ctx != nil {
+			c.cancel()
+		}
+	}()
 	// use double-defer to distinguish panic from runtime.Goexit,
 	// more details see https://golang.org/cl/134395
 	defer func() {
@@ -168,6 +202,7 @@ func (g *Group) doCall(c *call, key string, fn func() (interface{}, error)) {
 			// Already in the process of goexit, no need to call again
 		} else {
 			// Normal return
+			fmt.Printf("key %s returned for group size %d\n", key, c.dups)
 			for _, ch := range c.chans {
 				ch <- Result{c.val, c.err, c.dups > 0}
 			}
@@ -208,5 +243,19 @@ func (g *Group) Forget(key string) {
 		c.forgotten = true
 	}
 	delete(g.m, key)
+	g.mu.Unlock()
+}
+
+func (g *Group) Cancel(key string) {
+	g.mu.Lock()
+	if c, ok := g.m[key]; ok {
+		c.dups--
+		if c.dups < 0 {
+			fmt.Printf("db req cancelled for key %s\n", key)
+			c.cancel()
+		}
+		g.mu.Unlock()
+		return
+	}
 	g.mu.Unlock()
 }
