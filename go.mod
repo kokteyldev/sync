@@ -1,1 +1,1 @@
-module golang.org/x/sync
+module github.com/kokteyldev/sync
