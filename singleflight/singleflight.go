@@ -62,6 +62,7 @@ type call struct {
 	// mutex held before the WaitGroup is done, and are read but
 	// not written after the WaitGroup is done.
 	dups  int
+	startedAt time.Time
 	chans []chan<- Result
 
 	ctx    context.Context
@@ -107,6 +108,7 @@ func (g *Group) Do(key string, fn func() (interface{}, error)) (v interface{}, e
 	}
 	c := new(call)
 	c.wg.Add(1)
+	c.startedAt = time.Now()
 	g.m[key] = c
 	g.mu.Unlock()
 
@@ -132,6 +134,7 @@ func (g *Group) DoChan(key string, fn func() (interface{}, error)) <-chan Result
 	}
 	c := &call{chans: []chan<- Result{ch}}
 	c.wg.Add(1)
+	c.startedAt = time.Now()
 	g.m[key] = c
 	g.mu.Unlock()
 
@@ -158,6 +161,7 @@ func (g *Group) DoChanContext(key string, fn func(context.Context) func() (inter
 	}
 	c := &call{chans: []chan<- Result{ch}}
 	c.wg.Add(1)
+	c.startedAt = time.Now()
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	g.m[key] = c
 	g.mu.Unlock()
@@ -204,7 +208,7 @@ func (g *Group) doCall(c *call, key string, fn func() (interface{}, error)) {
 		} else {
 			// Normal return
 			if c.dups > 0 {
-				log.Printf("key %s returned for group size %d\n", key, c.dups)
+				log.Printf("key %s returned for group size %d in %s\n", key, c.dups, time.Now().Sub(c.startedAt))
 			}
 			for _, ch := range c.chans {
 				ch <- Result{c.val, c.err, c.dups > 0}
