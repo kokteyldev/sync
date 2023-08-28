@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sync"
+	"time"
 )
 
 // errGoexit indicates the runtime.Goexit was called in
